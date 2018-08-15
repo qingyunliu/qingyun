@@ -1,0 +1,167 @@
+Installation of nginx
+
+Xenial comes with the version 1.10.3 of nginx at the moment of this writing. This version does not support dynamic modules, which are necessary for this setup. To include another module one would have to recompile nginx with shibboleth module included. To avoid that we would rather get a newer version of nginx from their own repo.
+Create a file nginx.list with the following lines and drop it into the /etc/apt/sources.list.d directory:
+deb http://nginx.org/packages/ubuntu/ xenial nginx
+deb-src http://nginx.org/packages/ubuntu/ xenial nginx
+deb http://nginx.org/packages/mainline/ubuntu/ xenial nginx
+deb-src http://nginx.org/packages/mainline/ubuntu/ xenial nginx
+Import nginx signing key:
+# curl -OL http://nginx.org/keys/nginx_signing.key
+# apt-key add nginx_signing.key
+Refresh apt with apt-get update and a newer versions of nginx become available. The latest version available at the moment is 1.13.4 and we’ll go with that:
+# apt-get install -t xenial nginx
+For easier installation and updates you may want to pin nginx packages to nginx repo in apt preferences by dropping a file nginx with the following content into /etc/apt/preferences.d:
+Package: nginx
+Pin: release o=nginx
+Pin-Priority: 600
+
+
+
+
+Building modules
+
+Unfortunately the modules we need are available only in source and have to be compiled before we could plug them into nginx, but fear not, there is a special tool to help out with this task. To start building we have to have a compiler installed:
+# apt-get install build-essential fakeroot
+Prerequisites out of the way, go to pkg-oss web site and download the latest version. Untar the file with
+# tar -xzvf tip.tar.gz
+In the resulting directory you will find build_module.sh script and two directories, debian and rpm. Let’s build the Shibboleth module for nginx from its source on GitHub:
+# ./build_module.sh -v 1.15.1 https://github.com/nginx-shib/nginx-http-shibboleth.git
+You have to run this command as root. Then in /root/debuild directory you will find couple of nice Debian packages ready for use. The one we need is nginx-module-shibboleth_1.15.1_amd64.deb. Rename debuld directory to something like shibboleth-mod-nginx.
+Of course, the whole module building procedure is better carried out on a separate machine or local VM on your computer, not the production system.
+Besides shibboleth module we would also need headers-more module. Let’s build it too:
+# ./build_module.sh -v 1.15.1 https://github.com/openresty/headers-more-nginx-module.git
+Again in the /root/debuild directory there will be a debian package we need, nginx-module-headersmore_1.15.1_amd64.deb. Rename directory debuild to something like headers-more-mod-nginx.
+Now copy the Debian packages with these two modules to your nginx server and install them with
+# dpkg -i nginx-module-shibboleth_1.15.1_amd64.deb nginx-module-headersmore_1.15.1_amd64.deb
+In your /etc/nginx/module directory the files
+ngx_http_headers_more_filter_module-debug.so  
+ngx_http_headers_more_filter_module.so  
+ngx_http_shibboleth_module-debug.so 
+ngx_http_shibboleth_module.so
+should appear.
+nginx configuration
+First of all, add the modules you have just installed to nginx configuration in /etc/nginx/nginx.conf
+load_module modules/ngx_http_shibboleth_module.so;
+load_module modules/ngx_http_headers_more_filter_module.so;
+The intentionally simplified site definitions would look something like this:
+server {
+  listen 80 default_server;
+  server_name stage.gekorea.ge.com;
+  
+
+  root /content/site/stage/docs;
+
+# FastCGI authorizer for Shibboleth Auth Request module
+  location = /shibbolethauthorizer {
+    internal;
+    include fastcgi_params;
+#fastcgi_pass unix:/var/run/shibboleth/shibauthorizer.sock;
+fastcgi_pass 127.0.0.1:9002
+  }
+
+# FastCGI responder for SSO
+  location /Shibboleth.sso {
+    include fastcgi_params;
+#fastcgi_pass unix:/var/run/shibboleth/shibresponder.sock;
+fastcgi_pass 127.0.0.1:9003
+
+  }
+
+# Location secured by Shibboleth
+  location / {
+    shib_request /shibauthorizer;
+    shib_request_use_headers on;
+    include shib_clear_headers;
+    #include shib_fastcgi_params;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+    fastcgi_pass 127.0.0.1:9000;
+    fastcgi_index index.php;
+
+  }
+}
+
+
+
+Shibboleth SP configuration
+apt install -y libmemcached11  libodbc1  shibboleth-sp2-common  libshibsp6 libshibsp-plugins  shibboleth-sp2-utils
+In the end we should have:
+a) /etc/shibboleth/ directory that contains Shibboleth SP configuration files.
+b) shibd deamon which can be started using sudo systemctl restart shibd.service.
+c) /usr/lib/x86_64-linux-gnu/shibboleth/ directory which contains 'shibauthorizer' and 'shibresponder'. Those are fast-cgi executables required for nginx integration.
+If one of the above is missing it means that something went wrong and you may double check if those dependencies have been installed correctly.
+Install and configure Supervisor
+Install supervisor:
+sudo apt-get install supervisor
+Create a configuration file for supervisor:
+sudo touch /etc/supervisor/conf.d/shib.conf
+Edit /etc/supervisor/conf.d/shib.conf file:
+
+
+[fcgi-program:shibauthorizer]
+command=/usr/lib/x86_64-linux-gnu/shibboleth/shibauthorizer
+#socket=unix:///etc/shibboleth/shibauthorizer.sock
+#socket_owner=_shibd:_shibd
+#socket_mode=0666
+socket=tcp://127.0.0.1:9002
+user=_shibd
+stdout_logfile=/var/log/supervisor/shibauthorizer.log
+stderr_logfile=/var/log/supervisor/shibauthorizer.error.log
+
+[fcgi-program:shibresponder]
+command=/usr/lib/x86_64-linux-gnu/shibboleth/shibresponder
+#socket=unix:///etc/shibboleth/shibresponder.sock
+#socket_owner=_shibd:_shibd
+#socket_mode=0666
+socket=tcp://127.0.0.1:9003
+user=_shibd
+stdout_logfile=/var/log/supervisor/shibresponder.log
+stderr_logfile=/var/log/supervisor/shibresponder.error.log
+
+we use the IP +Port to connect shibboleth!!!!!
+Noted: The socket locations unix:///etc/shibboleth/shibauthorizer.sock and unix:///etc/shibboleth/shibresponder.sockare for Ubuntu specifically. For Debain system, you can replace etc with opt. Moreover, in some guides online for configuring supervisor for shibboleth, they use socket_owner=shibd:shibd for authorizing shibd deamon. However, it does not work in my case and socket_owner=_shibd:_shibd is the correct one.
+Then Restart Supervisor:
+sudo service supervisor restart
+
+
+
+
+
+
+
+
+SHIBBOLETH CONFIGURATION
+First, generate certificates:
+shib-keygen -f
+Uncomment example attribute in attribute-map.xml. In production environment select only needed attribute.
+vim /etc/shibboleth/attribute-map-xml
+Uncomment the block under this line
+<!--Examples of LDAP-based attributes, uncomment to use these... -->
+Edit shibboleth2.xml
+vim /etc/shibboleth/shibboleth2.xml
+Before “ApplicationDefaults” add:
+<RequestMapper type="XML">
+	<RequestMap >
+    	<Host name="sp.example.it"       
+            	authType="shibboleth"
+            	requireSession="true"
+            	redirectToSSL="443">
+        	<Path name="/" />
+    	</Host>
+	</RequestMap>
+</RequestMapper>
+Modify your SP hostname in “ApplicationDefaults”
+<ApplicationDefaults entityID="https://sp.example.it/shibboleth"
+                     	REMOTE_USER="eppn persistent-id targeted-id">
+Insert idem test wayf:
+<SSO discoveryProtocol="SAMLDS"discoveryURL="https://wayf.idem-test.garr.it/WAYF">
+     SAML2
+</SSO>
+
+
+Change Sessions in this way:(if you want change “http” to “https”)
+<Sessions lifetime="28800" timeout="3600" relayState="ss:mem"
+              	checkAddress="true" handlerSSL="true" cookieProps="https">
+
+

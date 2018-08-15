@@ -1,0 +1,7 @@
+FROM shibb-supervisor 
+
+MAINTAINER liuxun 19945611810@163.com
+
+
+CMD /etc/init.d/shibd start && service supervisor start && top 
+

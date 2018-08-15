@@ -1,0 +1,25 @@
+Ò»¡¢
+sudo apt-get install software-properties-common
+sudo apt-key adv --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 0xF1656F24C74CD1D8
+sudo add-apt-repository 'deb [arch=amd64,i386,ppc64el] http://mirrors.tuna.tsinghua.edu.cn/mariadb/repo/10.1/ubuntu xenial main'
+
+sudo apt update
+sudo apt install mariadb-server
+
+
+
+
+
+
+
+
+
+######################################################################################
+
+# MariaDB 10.1 repository list - created 2018-06-01 07:15 UTC
+# http://downloads.mariadb.org/mariadb/repositories/
+deb [arch=amd64,i386] http://mirrors.tuna.tsinghua.edu.cn/mariadb/repo/10.1/ubuntu xenial main
+deb-src http://mirrors.tuna.tsinghua.edu.cn/mariadb/repo/10.1/ubuntu xenial main
+
+
+¶þ¡¢
